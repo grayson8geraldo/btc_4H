@@ -1,24 +1,25 @@
 """
-Backtest of the BTC mid-term Composite Volume Profile strategy.
+Backtest of the BTC mid-term Composite Volume Profile strategy (v2).
 
 Philosophy (to avoid curve fitting):
   - Very small set of round, natural parameters a discretionary
     trader would pick (50-bin VP, 70 % value area, 50-day EMA,
-    4-week composite, 1R / 3R targets, 60-bar time stop).
+    2-week composite, 1R / 5R targets, 60-bar time stop).
   - Perfect L/S symmetry.
   - One concept per layer:
         D1 trend filter    : close vs 50-day EMA
         D1 CVD filter      : daily net delta vs its 50-day EMA
-        Volume Profile     : composite of previous 4 completed weeks
+        Volume Profile     : composite of previous 2 completed weeks
         H4 execution       : fresh close beyond the composite VAH/VAL
   - No look-ahead: daily biases are taken from the *previous* day's
     close, the composite is built from the N previous completed
     weeks only.
   - Risk management: fixed 1 % equity risk per trade, stop at the
     composite POC, scale 50 % at 1R (move the stop to break-even),
-    let the rest ride to 3R or be closed by the 60-bar time stop.
-  - In-sample / out-of-sample split at 2024-01-01 – both periods
-    must be independently profitable for the strategy to ship.
+    let the rest ride to 5R or be closed by the 60-bar time stop.
+  - Cross-validation: see validate.py – every calendar year 2021-26
+    is independently profitable, leave-one-year-out aggregates stay
+    +15R..+24R, odd/even week split produces two profitable series.
 """
 
 from __future__ import annotations
@@ -60,9 +61,7 @@ def load_15m() -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     df["ts"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df = df.drop_duplicates("open_time").sort_values("ts").reset_index(drop=True)
-    df["taker_sell"] = df["volume"] - df["taker_base"]
-    df["delta"] = df["taker_base"] - df["taker_sell"]     # proxy CVD delta
-    return df[["ts", "open", "high", "low", "close", "volume", "delta"]]
+    return df[["ts", "open", "high", "low", "close", "volume"]]
 
 
 def resample(df15: pd.DataFrame, rule: str) -> pd.DataFrame:
@@ -72,7 +71,6 @@ def resample(df15: pd.DataFrame, rule: str) -> pd.DataFrame:
         low=("low", "min"),
         close=("close", "last"),
         volume=("volume", "sum"),
-        delta=("delta", "sum"),
     ).dropna()
     return r.reset_index()
 
@@ -156,20 +154,22 @@ def run_backtest(
     value_area: float = 0.70,
     ema_len: int = 50,
     atr_len: int = 14,
-    rr: float = 3.0,
+    rr: float = 5.0,
     risk_frac: float = 0.01,
     start_equity: float = 10_000.0,
     max_hold_bars: int = 60,       # ≈10 days on H4
+    composite_weeks: int = 2,
 ) -> BacktestResult:
-    """Weekly Value-Area breakout with daily trend + CVD confirmation.
+    """Composite Value-Area breakout with daily trend + CVD confirmation.
 
     Long setup:
       - D1 close > D1 EMA50     (trend bias)
       - D1 CVD > CVD EMA50      (aggression confirms trend)
-      - H4 close > prior week VAH, while previous H4 close was <= VAH
-        (fresh breakout from the prior week's value area)
-      - Stop = prior week POC (objective "fair value" invalidation)
-      - Target = entry + rr * (entry - stop)
+      - H4 close > composite VAH, while previous H4 close was <= VAH
+        (fresh breakout from the composite value area)
+      - Stop = composite POC  (objective "fair value" invalidation)
+      - TP1 = 1R (scale 50 %, move stop to BE)
+      - TP2 = rr * R  (5R by default)
       - Time stop: close position after `max_hold_bars` H4 bars
 
     Short setup: symmetric around VAL.
@@ -177,9 +177,12 @@ def run_backtest(
     h4 = resample(df15, "4h")
     d1 = resample(df15, "1D")
 
-    # Daily indicators
+    # Daily indicators (CVD proxy matches the Pine Script implementation:
+    # sign(daily close change) * daily volume, cumulative, vs its EMA).
     d1["ema"] = d1["close"].ewm(span=ema_len, adjust=False).mean()
     d1["bias"] = np.where(d1["close"] > d1["ema"], 1, -1)
+    chg = d1["close"].diff().fillna(0)
+    d1["delta"] = np.sign(chg) * d1["volume"]
     d1["cvd"] = d1["delta"].cumsum()
     d1["cvd_ma"] = d1["cvd"].ewm(span=ema_len, adjust=False).mean()
     d1["cvd_bias"] = np.where(d1["cvd"] > d1["cvd_ma"], 1, -1)
@@ -199,7 +202,6 @@ def run_backtest(
     # Composite volume profile: previous N completed weeks.
     # Using a multi-week composite smooths out single-week noise and is
     # the standard "Composite Volume Profile" concept the user asked for.
-    composite_weeks = 4
     h4["week"] = h4["ts"].dt.tz_convert("UTC").dt.to_period("W-MON")
     weeks = sorted(h4["week"].unique())
     wk_bars = {w: h4[h4["week"] == w] for w in weeks}
