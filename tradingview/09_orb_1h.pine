@@ -1,0 +1,65 @@
+//@version=5
+// ============================================================================
+// BTC Tournament Strategy #9 — Opening-Range Breakout (1h box, UTC) on 15m
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_orb):
+//   Opening range = high/low of the first hour (4 * 15-min bars) of each UTC day.
+//   Long  when close crosses above the OR high (after the first hour, before the final 4 h).
+//   Short when close crosses below the OR low.
+//   Exit at the last 15-min bar of the day (UTC 23:45).
+//   Stop : 2 * ATR14 (15m), TP : 4 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #9 — Opening Range Breakout 1h (UTC)", overlay=true)
+
+atrLen = input.int(14, "ATR length")
+sMult  = input.float(2.0, "Stop = ATR *")
+tpMult = input.float(4.0, "TP   = ATR *")
+
+// UTC session begins at 00:00 each day. Pine's time_tradingday in UTC:
+isNewDay = ta.change(dayofweek(time, "UTC")) != 0 or ta.change(dayofmonth(time, "UTC")) != 0
+
+var float orHigh = na
+var float orLow  = na
+var int   barsInDay = 0
+
+if isNewDay
+    orHigh := na
+    orLow  := na
+    barsInDay := 0
+else
+    barsInDay += 1
+
+// First 4 bars of the day -> build opening range
+if barsInDay < 4
+    orHigh := na(orHigh) ? high : math.max(orHigh, high)
+    orLow  := na(orLow)  ? low  : math.min(orLow,  low)
+
+active = barsInDay >= 4 and barsInDay < (24 * 4) - 16
+isLastBarOfDay = barsInDay == (24 * 4) - 1
+
+newLong  = active and close > orHigh and close[1] <= orHigh
+newShort = active and close < orLow  and close[1] >= orLow
+
+a = ta.atr(atrLen)
+stopDist = sMult * a
+tpDist   = tpMult * a
+
+plot(orHigh, "OR high", color=color.new(color.green, 0), style=plot.style_stepline)
+plot(orLow,  "OR low",  color=color.new(color.red,   0), style=plot.style_stepline)
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(isLastBarOfDay, "CLOSE", shape.xcross, location.absolute, color.gray, size=size.tiny)
+
+alertcondition(newLong,  "BTC #9 ORB LONG",  "LONG: breakout above opening range")
+alertcondition(newShort, "BTC #9 ORB SHORT", "SHORT: breakdown below opening range")
+alertcondition(isLastBarOfDay, "BTC #9 ORB CLOSE", "Close position end of day")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#9 ORB 1h", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "OR range", text_color=color.white)
+    table.cell(info, 1, 1, str.tostring(orLow, format.mintick) + " - " + str.tostring(orHigh, format.mintick), text_color=color.white)
+    table.cell(info, 0, 2, "Stop/TP", text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick) + " / " + str.tostring(tpDist, format.mintick), text_color=color.white)

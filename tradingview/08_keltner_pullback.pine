@@ -1,0 +1,67 @@
+//@version=5
+// ============================================================================
+// BTC Tournament Strategy #8 — Keltner Channel Pullback on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_keltner_pullback):
+//   Keltner basis = EMA20 (4H), upper/lower = basis +/- 1.5 * ATR10 (4H)
+//   Long  when close > EMA200 AND low <= basis AND close > basis
+//   Short when close < EMA200 AND high >= basis AND close < basis
+//   Exit long  when close >= upper
+//   Exit short when close <= lower
+//   Stop : 2.5 * ATR14 (15m), TP : 5 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #8 — Keltner Pullback 4H", overlay=true)
+
+kLen    = input.int(20,  "Keltner basis EMA")
+atrKLen = input.int(10,  "Keltner ATR")
+kMult   = input.float(1.5,"Keltner mult")
+trendLen= input.int(200, "EMA trend length")
+atrLen  = input.int(14,  "Stop ATR length")
+sMult   = input.float(2.5,"Stop = ATR *")
+tpMult  = input.float(5.0,"TP   = ATR *")
+
+htf = "240"
+basis  = request.security(syminfo.tickerid, htf, ta.ema(close, kLen), lookahead=barmerge.lookahead_off)
+rng    = request.security(syminfo.tickerid, htf, ta.atr(atrKLen),     lookahead=barmerge.lookahead_off)
+upper  = basis + kMult * rng
+lower  = basis - kMult * rng
+e200   = request.security(syminfo.tickerid, htf, ta.ema(close, trendLen), lookahead=barmerge.lookahead_off)
+c4     = request.security(syminfo.tickerid, htf, close, lookahead=barmerge.lookahead_off)
+h4     = request.security(syminfo.tickerid, htf, high,  lookahead=barmerge.lookahead_off)
+l4     = request.security(syminfo.tickerid, htf, low,   lookahead=barmerge.lookahead_off)
+
+longEntry  = c4 > e200 and l4 <= basis and c4 > basis
+shortEntry = c4 < e200 and h4 >= basis and c4 < basis
+longExit   = c4 >= upper
+shortExit  = c4 <= lower
+
+newLong  = longEntry  and not longEntry[1]
+newShort = shortEntry and not shortEntry[1]
+newExitL = longExit   and not longExit[1]
+newExitS = shortExit  and not shortExit[1]
+
+a = ta.atr(atrLen)
+stopDist = sMult * a
+tpDist   = tpMult * a
+
+plot(basis, "Keltner basis (4H)", color=color.orange)
+plot(upper, "Keltner upper (4H)", color=color.blue)
+plot(lower, "Keltner lower (4H)", color=color.blue)
+plot(e200,  "EMA 200 (4H)",       color=color.gray, linewidth=2)
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(newExitL, "EXITL", shape.xcross,    location.abovebar, color.orange, size=size.tiny)
+plotshape(newExitS, "EXITS", shape.xcross,    location.belowbar, color.orange, size=size.tiny)
+
+alertcondition(newLong,  "BTC #8 Keltner LONG",  "LONG: pullback to Keltner basis in uptrend")
+alertcondition(newShort, "BTC #8 Keltner SHORT", "SHORT: pullback to Keltner basis in downtrend")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#8 Keltner Pullback 4H", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "Trend", text_color=color.white)
+    table.cell(info, 1, 1, c4 > e200 ? "UP" : "DOWN", text_color = c4 > e200 ? color.green : color.red)
+    table.cell(info, 0, 2, "Stop/TP", text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick) + " / " + str.tostring(tpDist, format.mintick), text_color=color.white)

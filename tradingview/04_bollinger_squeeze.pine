@@ -1,0 +1,72 @@
+//@version=5
+// ============================================================================
+// BTC Tournament Strategy #4 — Bollinger-Band Squeeze Breakout on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_bollinger_squeeze):
+//   Squeeze = bandwidth < 25th percentile of last 100 bars
+//   Long  when squeeze AND 4H close > previous BB upper
+//   Short when squeeze AND 4H close < previous BB lower
+//   Exit long  when 4H close < BB basis
+//   Exit short when 4H close > BB basis
+//   Stop : 3 * ATR14 (15m), TP : 6 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #4 — Bollinger Squeeze 4H", overlay=true)
+
+bbLen    = input.int(20,  "BB length")
+bbMult   = input.float(2.0,"BB dev")
+squeezeL = input.int(100, "Squeeze lookback")
+squeezePct = input.float(0.25,"Squeeze percentile")
+atrLen   = input.int(14,  "ATR length")
+atrMult  = input.float(3.0,"Stop = ATR *")
+tpMult   = input.float(6.0,"TP   = ATR *")
+
+htf = "240"
+basis  = request.security(syminfo.tickerid, htf, ta.sma(close, bbLen),                      lookahead=barmerge.lookahead_off)
+dev    = request.security(syminfo.tickerid, htf, bbMult * ta.stdev(close, bbLen),           lookahead=barmerge.lookahead_off)
+upper  = basis + dev
+lower  = basis - dev
+bw     = (upper - lower) / basis
+
+// 25th percentile of last 100 4H bars
+pct = request.security(syminfo.tickerid, htf, ta.percentile_linear_interpolation(((ta.sma(close, bbLen) + bbMult * ta.stdev(close, bbLen)) - (ta.sma(close, bbLen) - bbMult * ta.stdev(close, bbLen))) / ta.sma(close, bbLen), squeezeL, squeezePct * 100), lookahead=barmerge.lookahead_off)
+squeeze = bw < pct
+
+c4     = request.security(syminfo.tickerid, htf, close, lookahead=barmerge.lookahead_off)
+upper1 = request.security(syminfo.tickerid, htf, (ta.sma(close, bbLen) + bbMult * ta.stdev(close, bbLen))[1], lookahead=barmerge.lookahead_off)
+lower1 = request.security(syminfo.tickerid, htf, (ta.sma(close, bbLen) - bbMult * ta.stdev(close, bbLen))[1], lookahead=barmerge.lookahead_off)
+
+longEntry  = squeeze[1] and c4 > upper1
+shortEntry = squeeze[1] and c4 < lower1
+longExit   = c4 < basis
+shortExit  = c4 > basis
+
+newLong  = longEntry  and not longEntry[1]
+newShort = shortEntry and not shortEntry[1]
+newExitL = longExit   and not longExit[1]
+newExitS = shortExit  and not shortExit[1]
+
+a = ta.atr(atrLen)
+stopDist = atrMult * a
+tpDist   = tpMult  * a
+
+plot(basis, "BB basis (4H)", color=color.new(color.orange, 0))
+p1 = plot(upper, "BB upper (4H)", color=color.new(color.blue, 0))
+p2 = plot(lower, "BB lower (4H)", color=color.new(color.blue, 0))
+fill(p1, p2, color = squeeze ? color.new(color.yellow, 85) : color.new(color.blue, 95))
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(newExitL, "EXITL", shape.xcross,    location.abovebar, color.orange, size=size.tiny)
+plotshape(newExitS, "EXITS", shape.xcross,    location.belowbar, color.orange, size=size.tiny)
+
+alertcondition(newLong,  "BTC #4 Squeeze LONG",  "LONG: squeeze + BB upper break")
+alertcondition(newShort, "BTC #4 Squeeze SHORT", "SHORT: squeeze + BB lower break")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#4 Squeeze", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "Squeeze", text_color=color.white)
+    table.cell(info, 1, 1, squeeze ? "YES" : "no", text_color = squeeze ? color.yellow : color.gray)
+    table.cell(info, 0, 2, "Stop/TP", text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick) + " / " + str.tostring(tpDist, format.mintick), text_color=color.white)
