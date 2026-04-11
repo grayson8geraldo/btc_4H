@@ -29,40 +29,102 @@ Risk model (equity $200.00):
 Signals are strictly 1:1 with the backtest — see `bot/test_bot_logic.py`
 for proof (max |bot − backtest| across 5 years of 4H data = 0.000000).
 
-## Option A — TradingView alert (no bot needed)
+## Option A — GitHub Actions (fully free, no server, RECOMMENDED)
 
-If you don't want to run anything yourself, the Pine Script indicator
-`tradingview/05_macd_zero.pine` now contains `alert()` calls with fully
-rendered entry / stop / size / leverage text.
+Run the bot for free directly from this GitHub repository using GitHub
+Actions. A workflow at `.github/workflows/live-signal-bot.yml` runs the
+bot every 15 minutes on GitHub's runners. No VPS, no TradingView
+subscription, no credit card.
 
-1. Open TradingView, paste `05_macd_zero.pine` into the Pine editor, save.
-2. Add it to a **15-minute BTCUSDT** chart.
-3. In the indicator's settings, set **Account equity** (e.g. 200), **Risk %** (1), **Max leverage** (3).
-4. Right-click the chart → *Add alert*.
-5. *Condition* = `BTC Tournament #5 — MACD Zero 4H (WINNER)`, option **"Any alert() function call"**.
-6. *Trigger*    = `Once Per Bar Close`.
-7. *Delivery*   = notifications to mobile / email / webhook.
-
-Done. You'll get full dynamic messages on every state flip without running
-any server yourself. TradingView's free plan allows 1 active alert — that's
-exactly what you need since there's a single underlying rule.
-
-## Option B — Python Telegram bot (this directory)
-
-Runs independently of TradingView. Suitable for running on your laptop,
-a VPS, a Raspberry Pi, or anything with Python 3.8+ and outbound HTTPS.
+**Budget check:** each run takes ~30 seconds. `*/15 * * * *` consumes
+roughly 1,440 minutes per month — fits the 2,000-minute free quota on
+private repos. On **public** repos GitHub Actions minutes are
+**unlimited and free**, so you don't need to worry at all.
 
 ### 1. Create the Telegram bot
 
-1. Open Telegram, message **@BotFather**.
-2. Send `/newbot`, give it a name and username. BotFather will reply with
-   a token like `123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`.
-3. Start a chat with your new bot (click its link, press Start).
-4. Send any message to the bot.
-5. Get your chat id: message **@userinfobot** in Telegram — it replies with
-   your numeric user id (that IS your chat id).
+1. Open Telegram, message **@BotFather**, send `/newbot`, pick a name.
+2. Save the bot token BotFather returns (e.g. `123456789:ABC-DEF...`).
+3. Start a chat with your new bot.
+4. Send `/start` to your bot.
+5. Get your numeric chat id from **@userinfobot**.
 
-### 2. Environment variables
+### 2. Add secrets to the repo
+
+On GitHub, go to **Settings → Secrets and variables → Actions → New repository secret**
+and add the following secrets:
+
+| Name                  | Value                              |
+| --------------------- | ---------------------------------- |
+| `TELEGRAM_BOT_TOKEN`  | the BotFather token                |
+| `TELEGRAM_CHAT_ID`    | your numeric Telegram chat id      |
+
+Optional **variables** (Settings → Secrets and variables → Actions → Variables tab):
+
+| Name           | Default | Meaning                              |
+| -------------- | ------- | ------------------------------------ |
+| `BOT_EQUITY`   | `200`   | Account size in USD                  |
+| `BOT_RISK_PCT` | `0.01`  | Fraction of equity risked per trade  |
+| `BOT_MAX_LEV`  | `3.0`   | Maximum leverage                     |
+
+### 3. Enable the workflow
+
+1. On GitHub, open the **Actions** tab.
+2. If Actions is disabled, click **I understand, enable**.
+3. In the left panel pick **BTC Live Signal Bot**.
+4. Click **Run workflow** → pick mode `test` to send a test Telegram message.
+5. If the test arrives, pick `status` to see the current state, or just
+   wait — the schedule (`*/15 * * * *`) will take over automatically.
+
+### 4. That's it
+
+The workflow will:
+- fetch fresh BTCUSDT 4-hour candles from Binance,
+- compute MACD(12,26,9) + EMA(50) on 4H and ATR(14) on 15m,
+- detect state transitions against the persisted `bot/ci_state.json`,
+- send a detailed Telegram message on every transition,
+- commit back the updated state file so subsequent runs see it.
+
+State commits use `[skip ci]` so they don't trigger any extra workflow.
+If they pollute your history you can always squash them later.
+
+### 5. Scaling and safety
+
+- If you need fewer runs (e.g. to stay on the 2000-min free tier),
+  change the cron line in the workflow file to `*/30 * * * *`. The
+  strategy operates on 4-hour bars so a 30-minute polling interval
+  detects every signal with at most 30 minutes of delay.
+- If you want to pause the bot, disable the workflow on the Actions tab.
+- If you want to change the equity or risk, update the variables; the
+  next run will pick them up automatically.
+
+## Option B — TradingView alert (NOT free in practice)
+
+TradingView's free tier only supports alerts on the **current chart
+only** and does not deliver Telegram notifications. To get useful
+alerts from Pine Script `alert()` calls across sessions, TradingView
+typically requires a paid plan (Essential or above). If you already pay
+for it:
+
+1. Open TradingView, paste `tradingview/05_macd_zero.pine` into the Pine
+   editor, save.
+2. Add it to a **15-minute BTCUSDT** chart.
+3. Configure the inputs: **Account equity**, **Risk %**, **Max leverage**.
+4. Right-click the chart → *Add alert*.
+5. *Condition* = `BTC Tournament #5 — MACD Zero 4H (WINNER)`, option
+   **"Any alert() function call"**.
+6. *Trigger*    = `Once Per Bar Close`.
+7. *Delivery*   = notifications to your mobile / email / webhook.
+
+Otherwise, use Option A above — it does the same thing for free.
+
+## Option C — Run the Python bot on your own machine
+
+Use this if you prefer running on your own hardware — a laptop that's
+always on, a Raspberry Pi, a home server, an Android phone with Termux,
+or a VPS. Anything with Python 3.8+ and outbound HTTPS works.
+
+### 1. Environment variables
 
 ```bash
 export TELEGRAM_BOT_TOKEN="123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
@@ -72,14 +134,14 @@ export BOT_RISK_PCT="0.01"  # optional, default 1%
 export BOT_MAX_LEV="3.0"    # optional, default 3x
 ```
 
-### 3. Test the pipeline
+### 2. Test the pipeline
 
 ```bash
 python3 bot/live_macd_bot.py --test      # sends "Bot is alive" to Telegram
 python3 bot/live_macd_bot.py --status    # prints current state, no alert
 ```
 
-### 4. Run modes
+### 3. Run modes
 
 **One-shot (for cron):**
 
@@ -99,7 +161,7 @@ python3 bot/live_macd_bot.py --loop 900
 python3 bot/live_macd_bot.py --once --equity 500
 ```
 
-### 5. Install as a cron job (Linux / macOS)
+### 4. Install as a cron job (Linux / macOS)
 
 Open crontab: `crontab -e`, add:
 
@@ -113,7 +175,7 @@ The `sleep 30` offset gives Binance 30 seconds to finalise the most recent
 bar before the bot fetches it, eliminating the race where a 4H bar has just
 closed but the API still returns the open value.
 
-### 6. Install as a systemd service (Linux)
+### 5. Install as a systemd service (Linux)
 
 Create `/etc/systemd/system/btc-macd-bot.service`:
 

@@ -62,7 +62,10 @@ MAX_LEVERAGE     = float(os.environ.get("BOT_MAX_LEV",  "3.0"))
 
 # ----- IO ------------------------------------------------------------------
 BINANCE_API = "https://api.binance.com/api/v3/klines"
-STATE_FILE  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_state.json")
+STATE_FILE  = os.environ.get(
+    "BOT_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_state.json"),
+)
 LOG_PREFIX  = "[live_macd_bot]"
 
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()

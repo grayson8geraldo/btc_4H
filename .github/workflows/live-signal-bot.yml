@@ -1,0 +1,92 @@
+name: BTC Live Signal Bot
+
+# Runs the live MACD Zero 4H bot on a schedule.
+# Free tier of GitHub Actions gives 2000 minutes / month on private repos
+# and unlimited minutes on public repos. Each run finishes in ~30 seconds,
+# so */15 * * * * uses ~1440 min / month on a private repo — within limits.
+# If you hit the cap, change the cron to "*/30 * * * *" (still fine because
+# the strategy operates on 4-hour bars).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode: once | test | status"
+        required: false
+        default: "once"
+        type: choice
+        options:
+          - once
+          - test
+          - status
+
+concurrency:
+  group: live-signal-bot
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BOT_EQUITY: ${{ vars.BOT_EQUITY || '200' }}
+      BOT_RISK_PCT: ${{ vars.BOT_RISK_PCT || '0.01' }}
+      BOT_MAX_LEV: ${{ vars.BOT_MAX_LEV || '3.0' }}
+      BOT_STATE_FILE: bot/ci_state.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sanity-check required secrets
+        run: |
+          if [[ -z "${TELEGRAM_BOT_TOKEN}" || -z "${TELEGRAM_CHAT_ID}" ]]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set as repository secrets."
+            exit 1
+          fi
+
+      - name: Run bot
+        run: |
+          MODE="${{ github.event.inputs.mode || 'once' }}"
+          case "$MODE" in
+            once)   python3 bot/live_macd_bot.py --once ;;
+            test)   python3 bot/live_macd_bot.py --test ;;
+            status) python3 bot/live_macd_bot.py --status ;;
+            *) echo "Unknown mode $MODE"; exit 1 ;;
+          esac
+
+      - name: Commit updated state
+        if: github.event_name == 'schedule' || github.event.inputs.mode == 'once'
+        run: |
+          if [[ -n "$(git status --porcelain bot/ci_state.json)" ]]; then
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name  "github-actions[bot]"
+            git add bot/ci_state.json
+            git commit -m "bot: update state [skip ci]"
+            # Up to 4 retries in case of concurrent push race
+            for i in 1 2 3 4; do
+              if git push; then
+                exit 0
+              fi
+              echo "push failed, retrying in $((i*2))s..."
+              sleep $((i*2))
+              git pull --rebase --autostash
+            done
+            echo "::error::Failed to push state after 4 retries"
+            exit 1
+          else
+            echo "No state change to commit"
+          fi
