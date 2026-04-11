@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent template for the BTC Tournament MACD Zero bot.
+
+  Before loading: run bot/macos/install.sh which will replace the
+  __REPO_ROOT__ placeholder with the absolute path to your clone.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.btc-tournament.bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/bot/macos/run_bot.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+
+    <!-- Start immediately when the LaunchAgent is loaded (at login) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the bot process ever exits -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't hammer launchd if the script crashes in a tight loop -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/bot/bot.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/bot/bot.log</string>
+
+    <!-- Tell launchd this is a background service (lower priority) -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Ensure a sane PATH so /usr/bin/caffeinate and python3 are found -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

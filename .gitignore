@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 bot/bot_state.json
 bot/bot.log
+bot/macos/.env

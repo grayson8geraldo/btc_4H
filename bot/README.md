@@ -197,7 +197,78 @@ The `sleep 30` offset gives Binance 30 seconds to finalise the most recent
 bar before the bot fetches it, eliminating the race where a 4H bar has just
 closed but the API still returns the open value.
 
-### 5. Install as a systemd service (Linux)
+### 5. Install as a launchd service on macOS (recommended for 24/7)
+
+macOS's proper way to keep a process running 24/7 is **launchd**. The
+`bot/macos/` folder contains a ready-made LaunchAgent template and a
+one-shot installer. It takes about 2 minutes end-to-end:
+
+```bash
+# 1. Clone the repo anywhere
+git clone https://github.com/grayson8geraldo/btc_4H.git ~/btc_4H
+cd ~/btc_4H
+
+# 2. Create your .env with the secrets
+cp bot/macos/.env.example bot/macos/.env
+nano bot/macos/.env              # paste your Telegram token and chat id
+
+# 3. Run the installer
+bash bot/macos/install.sh
+```
+
+That's it. The installer:
+
+1. Sends a test Telegram message to prove the credentials work.
+2. Renders `com.btc-tournament.bot.plist` with the absolute path to
+   your clone and copies it to `~/Library/LaunchAgents/`.
+3. `launchctl load`s it so the bot starts immediately and also
+   auto-starts every time you log in.
+
+**Verify it is running:**
+
+```bash
+launchctl list | grep btc-tournament   # should print the label
+tail -f bot/bot.log                    # live log stream
+```
+
+**Pause / stop the bot:**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.btc-tournament.bot.plist
+```
+
+**Resume:**
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.btc-tournament.bot.plist
+```
+
+**Uninstall completely:**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.btc-tournament.bot.plist
+rm ~/Library/LaunchAgents/com.btc-tournament.bot.plist
+```
+
+**Important macOS caveats:**
+
+1. **When the Mac sleeps, the bot sleeps.** The launchd agent will
+   automatically resume when you wake the machine up. The bot's
+   state logic is bar-based, not wall-clock, so it catches up
+   correctly on wake — you just learn about the signal a bit later.
+2. For true 24/7, connect the Mac to power and set **System
+   Settings → Energy / Battery → Prevent automatic sleeping on
+   power adapter when the display is off** ON. Laptops: add
+   `sudo pmset -a sleep 0` if you want to disable sleep altogether.
+3. `run_bot.sh` wraps the bot in `caffeinate -i` so the process
+   itself won't be throttled by App Nap while it is running.
+4. macOS may ask permission for "Terminal" / "Python" to run — click
+   Allow the first time.
+5. Keep your Telegram secrets in `bot/macos/.env` — that file is
+   gitignored and lives only on your Mac. It never gets uploaded
+   anywhere.
+
+### 6. Install as a systemd service (Linux)
 
 Create `/etc/systemd/system/btc-macd-bot.service`:
 
