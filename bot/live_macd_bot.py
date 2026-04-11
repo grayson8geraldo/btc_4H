@@ -283,25 +283,52 @@ def compute_stop_distance_15m() -> float:
 # Telegram
 # ---------------------------------------------------------------------------
 
-def send_telegram(text: str) -> None:
+def send_telegram(text: str, parse_mode: str = "Markdown") -> bool:
+    """Send a Telegram message. Returns True on success, False on failure.
+
+    On any HTTP 400 (usually caused by Markdown parse errors) the message
+    is retried once as plain text so a malformed character class cannot
+    silently drop alerts.
+    """
     if not TG_TOKEN or not TG_CHAT:
-        print(f"{LOG_PREFIX} [WARN] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — printing instead:\n{text}")
-        return
+        print(
+            f"{LOG_PREFIX} [WARN] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — "
+            f"printing instead:\n{text}"
+        )
+        return False
+
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    body = urllib.parse.urlencode(
-        {
-            "chat_id": TG_CHAT,
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": "true",
-        }
-    ).encode()
+    payload: dict[str, str] = {
+        "chat_id": TG_CHAT,
+        "text": text,
+        "disable_web_page_preview": "true",
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    body = urllib.parse.urlencode(payload).encode()
     req = urllib.request.Request(url, data=body)
+
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             r.read()
+        return True
+    except urllib.error.HTTPError as e:
+        err_body = ""
+        try:
+            err_body = e.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+        print(
+            f"{LOG_PREFIX} [WARN] Telegram API HTTP {e.code} "
+            f"(parse_mode={parse_mode or 'none'}): {err_body.strip()}"
+        )
+        if e.code == 400 and parse_mode:
+            print(f"{LOG_PREFIX} retrying without parse_mode (plain text)...")
+            return send_telegram(text, parse_mode="")
+        return False
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} [ERROR] Telegram send failed: {e}")
+        return False
 
 
 def format_signal(
@@ -439,9 +466,36 @@ def cmd_loop(interval: int, equity: float) -> None:
 
 
 def cmd_test() -> None:
+    """Send a plain-text test message. Exits non-zero if Telegram rejects it."""
+    if not TG_TOKEN:
+        print(f"{LOG_PREFIX} [ERROR] TELEGRAM_BOT_TOKEN is empty")
+        sys.exit(2)
+    if not TG_CHAT:
+        print(f"{LOG_PREFIX} [ERROR] TELEGRAM_CHAT_ID is empty")
+        sys.exit(2)
+    # Length/shape sanity check of the token so typos get caught early.
+    if ":" not in TG_TOKEN or len(TG_TOKEN) < 20:
+        print(f"{LOG_PREFIX} [ERROR] TELEGRAM_BOT_TOKEN does not look like a BotFather token ('NNNN:XXXX...').")
+        sys.exit(2)
+    # Telegram chat ids are integers (may be negative for groups).
+    try:
+        int(TG_CHAT)
+    except ValueError:
+        print(f"{LOG_PREFIX} [ERROR] TELEGRAM_CHAT_ID={TG_CHAT!r} is not an integer")
+        sys.exit(2)
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    send_telegram(f"*BTC Tournament #5 — test message*\nBot is alive. {now}")
-    print(f"{LOG_PREFIX} test message sent")
+    msg = (
+        "BTC Tournament #5 test message.\n"
+        f"Bot is alive at {now}.\n"
+        "You will get LONG / SHORT / FLAT alerts here when the strategy state changes."
+    )
+    # Send as plain text (no parse_mode) to avoid any Markdown / MarkdownV2 issues.
+    ok = send_telegram(msg, parse_mode="")
+    if not ok:
+        print(f"{LOG_PREFIX} [FAIL] test message NOT delivered — see error above.")
+        sys.exit(1)
+    print(f"{LOG_PREFIX} test message delivered successfully")
 
 
 def cmd_status(equity: float) -> None:
