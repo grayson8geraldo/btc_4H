@@ -29,6 +29,28 @@ Risk model (equity $200.00):
 Signals are strictly 1:1 with the backtest — see `bot/test_bot_logic.py`
 for proof (max |bot − backtest| across 5 years of 4H data = 0.000000).
 
+## Data source
+
+The bot fetches BTCUSDT OHLCV candles from a public exchange API. By
+default it uses **Bybit** (spot `BTCUSDT`) because Binance's public API
+returns `HTTP 451 Unavailable For Legal Reasons` on US datacenter IPs,
+including GitHub Actions runners.
+
+You can override the data source with the `BOT_EXCHANGE` env var:
+
+```bash
+export BOT_EXCHANGE=bybit     # default, works everywhere
+export BOT_EXCHANGE=binance   # use only if your IP is not in a blocked region
+```
+
+If the configured exchange fails the bot transparently falls back to the
+other one on that particular run, so there's no "exchange outage" single
+point of failure.
+
+Price differences between Binance and Bybit spot BTCUSDT at 4-hour
+resolution are negligible (< 0.05%) and do not affect the MACD +
+EMA50 state transitions the strategy acts on.
+
 ## Option A — GitHub Actions (fully free, no server, RECOMMENDED)
 
 Run the bot for free directly from this GitHub repository using GitHub

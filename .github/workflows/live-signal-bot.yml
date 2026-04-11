@@ -38,6 +38,9 @@ jobs:
       BOT_EQUITY: ${{ vars.BOT_EQUITY || '200' }}
       BOT_RISK_PCT: ${{ vars.BOT_RISK_PCT || '0.01' }}
       BOT_MAX_LEV: ${{ vars.BOT_MAX_LEV || '3.0' }}
+      # Default to Bybit: Binance blocks US datacenter IPs (HTTP 451),
+      # which includes GitHub Actions runners on Azure US.
+      BOT_EXCHANGE: bybit
       BOT_STATE_FILE: bot/ci_state.json
 
     steps:

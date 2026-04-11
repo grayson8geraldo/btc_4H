@@ -2,9 +2,10 @@
 Live Telegram bot for BTC Tournament Strategy #5 — MACD Zero 4H (WINNER).
 
 The bot replicates the exact state logic from backtest/strategies.py
-(strat_macd_zero): on every run it pulls fresh 4-hour candles from the
-public Binance API, computes MACD(12,26,9) + EMA(50), and — when the
-state (long / short / neutral) changes — sends a Telegram message with:
+(strat_macd_zero): on every run it pulls fresh 4-hour candles from a
+public crypto exchange API, computes MACD(12,26,9) + EMA(50), and —
+when the state (long / short / neutral) changes — sends a Telegram
+message with:
 
     * direction (LONG / SHORT / FLAT)
     * entry price (current market)
@@ -15,6 +16,13 @@ state (long / short / neutral) changes — sends a Telegram message with:
 Runs on pure Python stdlib — no pip install required. Works on any host
 with Python 3.8+ and outbound HTTPS.
 
+Exchange selection (BOT_EXCHANGE env var):
+    * "bybit"   — default. Works on GitHub Actions and US/EU IPs.
+    * "binance" — more liquid data but HTTP 451 on US datacenters
+                  (including GitHub Actions runners).
+When the primary exchange fails with a network / geo-block error, the
+bot automatically falls back to the other one.
+
 --------------------------------------------------------------------------
 Quick start:
 
@@ -24,10 +32,6 @@ Quick start:
     python3 bot/live_macd_bot.py --loop 900        # run forever, check every 15 min
     python3 bot/live_macd_bot.py --test            # send a test message only
     python3 bot/live_macd_bot.py --status          # print current state (no alert)
-
-Cron job (Linux):  every 15 minutes, 30 seconds after each quarter-hour
-
-    */15 * * * *  sleep 30 && cd /path/to/btc_4H && python3 bot/live_macd_bot.py --once >> bot/bot.log 2>&1
 --------------------------------------------------------------------------
 """
 
@@ -38,6 +42,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -60,8 +65,15 @@ DEFAULT_EQUITY   = float(os.environ.get("BOT_EQUITY", "200"))
 RISK_PER_TRADE   = float(os.environ.get("BOT_RISK_PCT", "0.01"))   # 1%
 MAX_LEVERAGE     = float(os.environ.get("BOT_MAX_LEV",  "3.0"))
 
+# ----- Exchange config -----------------------------------------------------
+# Default to Bybit because Binance public API returns HTTP 451
+# (Unavailable For Legal Reasons) on GitHub Actions / US-based hosts.
+# Override with BOT_EXCHANGE=binance for local runs outside the US.
+EXCHANGE     = os.environ.get("BOT_EXCHANGE", "bybit").lower().strip()
+BINANCE_API  = "https://api.binance.com/api/v3/klines"
+BYBIT_API    = "https://api.bybit.com/v5/market/kline"
+
 # ----- IO ------------------------------------------------------------------
-BINANCE_API = "https://api.binance.com/api/v3/klines"
 STATE_FILE  = os.environ.get(
     "BOT_STATE_FILE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_state.json"),
@@ -76,27 +88,97 @@ TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID",   "").strip()
 # Market data
 # ---------------------------------------------------------------------------
 
-def fetch_klines(interval: str, limit: int) -> list[dict]:
-    url = f"{BINANCE_API}?symbol={SYMBOL}&interval={interval}&limit={limit}"
+_BYBIT_INTERVAL = {"4h": "240", "15m": "15", "1h": "60", "30m": "30", "1d": "D"}
+_INTERVAL_MS = {
+    "15m": 15 * 60 * 1000,
+    "30m": 30 * 60 * 1000,
+    "1h":  60 * 60 * 1000,
+    "4h":  4 * 60 * 60 * 1000,
+    "1d":  24 * 60 * 60 * 1000,
+}
+
+
+def _http_get(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "btc-tournament-bot/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
-        raw = json.loads(r.read())
+        return r.read()
+
+
+def _fetch_klines_binance(interval: str, limit: int) -> list[dict]:
+    url = f"{BINANCE_API}?symbol={SYMBOL}&interval={interval}&limit={limit}"
+    raw = json.loads(_http_get(url))
     now_ms = int(time.time() * 1000)
     bars: list[dict] = []
     for row in raw:
         bars.append(
             {
                 "open_time": int(row[0]),
-                "open":  float(row[1]),
-                "high":  float(row[2]),
-                "low":   float(row[3]),
-                "close": float(row[4]),
+                "open":   float(row[1]),
+                "high":   float(row[2]),
+                "low":    float(row[3]),
+                "close":  float(row[4]),
                 "volume": float(row[5]),
                 "close_time": int(row[6]),
                 "closed": int(row[6]) < now_ms,
             }
         )
     return bars
+
+
+def _fetch_klines_bybit(interval: str, limit: int) -> list[dict]:
+    bybit_iv = _BYBIT_INTERVAL.get(interval)
+    if bybit_iv is None:
+        raise ValueError(f"Unsupported Bybit interval {interval!r}")
+    url = (
+        f"{BYBIT_API}?category=spot&symbol={SYMBOL}"
+        f"&interval={bybit_iv}&limit={limit}"
+    )
+    payload = json.loads(_http_get(url))
+    if payload.get("retCode") != 0:
+        raise RuntimeError(f"Bybit error: {payload.get('retMsg', 'unknown')}")
+    rows = payload.get("result", {}).get("list", [])
+    if not rows:
+        raise RuntimeError("Bybit returned empty kline list")
+    # Bybit returns newest-first, reverse so we match Binance's oldest-first layout
+    rows = list(reversed(rows))
+
+    bar_ms = _INTERVAL_MS[interval]
+    now_ms = int(time.time() * 1000)
+    bars: list[dict] = []
+    for row in rows:
+        open_time = int(row[0])
+        close_time = open_time + bar_ms - 1
+        bars.append(
+            {
+                "open_time": open_time,
+                "open":   float(row[1]),
+                "high":   float(row[2]),
+                "low":    float(row[3]),
+                "close":  float(row[4]),
+                "volume": float(row[5]),
+                "close_time": close_time,
+                "closed": close_time < now_ms,
+            }
+        )
+    return bars
+
+
+def fetch_klines(interval: str, limit: int) -> list[dict]:
+    """Fetch OHLCV bars with an automatic failover to the other exchange."""
+    primary = EXCHANGE if EXCHANGE in ("bybit", "binance") else "bybit"
+    fallback = "binance" if primary == "bybit" else "bybit"
+
+    order = [primary, fallback]
+    last_err: Exception | None = None
+    for name in order:
+        try:
+            if name == "binance":
+                return _fetch_klines_binance(interval, limit)
+            return _fetch_klines_bybit(interval, limit)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            print(f"{LOG_PREFIX} [WARN] {name} fetch failed ({interval}): {e}")
+    raise RuntimeError(f"All exchanges failed; last error: {last_err}")
 
 
 # ---------------------------------------------------------------------------
