@@ -42,11 +42,16 @@
     <key>ProcessType</key>
     <string>Background</string>
 
-    <!-- Ensure a sane PATH so /usr/bin/caffeinate and python3 are found -->
+    <!-- Ensure a sane PATH so /usr/bin/caffeinate and python3 are found.
+         PYTHONUNBUFFERED=1 forces Python to flush stdout/stderr on every
+         print so bot.log updates immediately (without this flag launchd
+         sees buffered output and the log looks empty for minutes). -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
     </dict>
 </dict>
 </plist>

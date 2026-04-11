@@ -38,4 +38,7 @@ fi
 # caffeinate prevents macOS from putting the process to sleep when the display
 # goes dark (but the machine still sleeps normally when the lid is closed).
 # The "-i" flag keeps the system from idle-sleeping while this process runs.
-exec /usr/bin/caffeinate -i "${PYBIN}" bot/live_macd_bot.py --loop 900
+# The "-u" flag on python forces unbuffered stdout/stderr so log lines appear
+# in bot.log immediately, not only after a 4-8 KB buffer fills up.
+export PYTHONUNBUFFERED=1
+exec /usr/bin/caffeinate -i "${PYBIN}" -u bot/live_macd_bot.py --loop 900
