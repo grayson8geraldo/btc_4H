@@ -19,6 +19,9 @@ sigLen   = input.int(9,  "MACD signal")
 emaLen   = input.int(50, "EMA filter length")
 atrLen   = input.int(14, "ATR length")
 atrMult  = input.float(3.0, "Stop = ATR *")
+equity   = input.float(200.0, "Account equity ($)", minval=10)
+riskPct  = input.float(1.0,   "Risk per trade (%)", minval=0.1, maxval=5)
+maxLev   = input.float(3.0,   "Max leverage", minval=1)
 
 htf = "240"
 
@@ -48,6 +51,18 @@ flatten  = state ==  0 and state[1] != 0
 a = ta.atr(atrLen)
 stopDist = atrMult * a
 
+// --- Risk-based sizing (for the alert text, no orders placed by the indicator)
+riskUsd     = equity * riskPct / 100.0
+sizeBtcRaw  = riskUsd / stopDist
+notionalRaw = sizeBtcRaw * close
+maxNotional = equity * maxLev
+sizeBtc     = notionalRaw > maxNotional ? maxNotional / close : sizeBtcRaw
+notional    = sizeBtc * close
+leverage    = notional / equity
+
+longStop  = close - stopDist
+shortStop = close + stopDist
+
 plot(e50, "EMA 50 (4H)", color=color.blue, linewidth=2)
 
 plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.new(color.green, 0), text="L", textcolor=color.white, size=size.small)
@@ -58,6 +73,31 @@ plotshape(flatten,  "FLAT",  shape.xcross,    location.absolute, color.gray, siz
 bgcolor(state == 1  ? color.new(color.green, 92) : na)
 bgcolor(state == -1 ? color.new(color.red,   92) : na)
 
+// --- Dynamic alerts (use "Any alert() function call" in the TradingView alert dialog)
+if newLong
+    msg = "🟢 LONG BTCUSDT\n" +
+          "Entry : ~" + str.tostring(close, format.mintick) + "\n" +
+          "Stop  : "  + str.tostring(longStop, format.mintick) +
+          " (-" + str.tostring(stopDist, format.mintick) + ")\n" +
+          "Size  : " + str.tostring(sizeBtc, "#.#####") + " BTC" +
+          " (" + str.tostring(notional, "#.##") + "$, " + str.tostring(leverage, "#.#") + "x)\n" +
+          "TP    : none — exit on SHORT/FLAT signal"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if newShort
+    msg = "🔴 SHORT BTCUSDT\n" +
+          "Entry : ~" + str.tostring(close, format.mintick) + "\n" +
+          "Stop  : "  + str.tostring(shortStop, format.mintick) +
+          " (+" + str.tostring(stopDist, format.mintick) + ")\n" +
+          "Size  : " + str.tostring(sizeBtc, "#.#####") + " BTC" +
+          " (" + str.tostring(notional, "#.##") + "$, " + str.tostring(leverage, "#.#") + "x)\n" +
+          "TP    : none — exit on LONG/FLAT signal"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if flatten
+    alert("⚪ FLAT BTCUSDT — close any open position and wait for next signal", alert.freq_once_per_bar_close)
+
+// --- Legacy static alertconditions (still available in the alert dialog)
 alertcondition(newLong,  "BTC #5 MACD Zero LONG",  "LONG: 4H MACD > 0 AND close > EMA50")
 alertcondition(newShort, "BTC #5 MACD Zero SHORT", "SHORT: 4H MACD < 0 AND close < EMA50")
 alertcondition(flatten,  "BTC #5 MACD Zero FLAT",  "FLAT")
