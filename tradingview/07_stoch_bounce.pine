@@ -1,0 +1,57 @@
+//@version=6
+// ============================================================================
+// BTC Tournament Strategy #7 — Stochastic Bounce in Trend on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_stoch_bounce):
+//   Long  when stoch %K crosses above %D while %K<30 AND close > EMA200 (4H)
+//   Short when stoch %K crosses below %D while %K>70 AND close < EMA200 (4H)
+//   Exit long  when %K > 80
+//   Exit short when %K < 20
+//   Stop : 3 * ATR14 (15m), TP : 4.5 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #7 — Stoch Bounce 4H", overlay=true)
+
+kLen   = input.int(14, "Stoch %K")
+dLen   = input.int(3,  "Stoch %D")
+trendLen = input.int(200, "EMA trend length")
+atrLen = input.int(14, "ATR length")
+sMult  = input.float(3.0, "Stop = ATR *")
+tpMult = input.float(4.5, "TP   = ATR *")
+
+htf = "240"
+k = request.security(syminfo.tickerid, htf, ta.sma(ta.stoch(close, high, low, kLen), 1), lookahead=barmerge.lookahead_off)
+d = request.security(syminfo.tickerid, htf, ta.sma(ta.stoch(close, high, low, kLen), dLen), lookahead=barmerge.lookahead_off)
+e200 = request.security(syminfo.tickerid, htf, ta.ema(close, trendLen), lookahead=barmerge.lookahead_off)
+c4   = request.security(syminfo.tickerid, htf, close, lookahead=barmerge.lookahead_off)
+
+longEntry  = ta.crossover(k, d)  and k < 30 and c4 > e200
+shortEntry = ta.crossunder(k, d) and k > 70 and c4 < e200
+longExit   = k > 80
+shortExit  = k < 20
+
+newLong  = longEntry  and not longEntry[1]
+newShort = shortEntry and not shortEntry[1]
+newExitL = longExit   and not longExit[1]
+newExitS = shortExit  and not shortExit[1]
+
+a = ta.atr(atrLen)
+stopDist = sMult * a
+tpDist   = tpMult * a
+
+plot(e200, "EMA 200 (4H)", color=color.blue, linewidth=2)
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(newExitL, "EXITL", shape.xcross,    location.abovebar, color.orange, size=size.tiny)
+plotshape(newExitS, "EXITS", shape.xcross,    location.belowbar, color.orange, size=size.tiny)
+
+alertcondition(newLong,  "BTC #7 Stoch LONG",  "LONG: K>D, K<30 in uptrend")
+alertcondition(newShort, "BTC #7 Stoch SHORT", "SHORT: K<D, K>70 in downtrend")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#7 Stoch Bounce 4H", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "%K / %D", text_color=color.white)
+    table.cell(info, 1, 1, str.tostring(k, "#.#") + " / " + str.tostring(d, "#.#"), text_color=color.white)
+    table.cell(info, 0, 2, "Stop/TP", text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick) + " / " + str.tostring(tpDist, format.mintick), text_color=color.white)

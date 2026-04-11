@@ -1,0 +1,52 @@
+//@version=6
+// ============================================================================
+// BTC Tournament Strategy #6 — Supertrend(10,3) Follower on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_supertrend):
+//   Follow 4H Supertrend(10, 3) direction.
+//   Long  when direction flips from down (-1) to up (+1)
+//   Short when direction flips from up to down
+//   Stop : 3 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #6 — Supertrend 4H", overlay=true)
+
+stLen   = input.int(10,  "Supertrend ATR length")
+stMult  = input.float(3.0,"Supertrend multiplier")
+atrLen  = input.int(14,  "Stop ATR length")
+stopMult= input.float(3.0,"Stop = ATR *")
+
+htf = "240"
+
+// Wrapper function so request.security can fetch the Supertrend tuple.
+// You cannot index ta.supertrend(...)[0] — it must be destructured.
+f_st() =>
+    [line, dir] = ta.supertrend(stMult, stLen)
+    [line, dir]
+
+[stLine, dir] = request.security(syminfo.tickerid, htf, f_st(), lookahead=barmerge.lookahead_off)
+// Pine's ta.supertrend direction: 1 when downtrend, -1 when uptrend. Normalise.
+direction = dir < 0 ? 1 : -1   // 1 = uptrend, -1 = downtrend
+
+newLong  = direction ==  1 and direction[1] !=  1
+newShort = direction == -1 and direction[1] != -1
+
+a = ta.atr(atrLen)
+stopDist = stopMult * a
+
+plot(stLine, "Supertrend (4H)", color = direction == 1 ? color.green : color.red, linewidth=2)
+bgcolor(direction ==  1 ? color.new(color.green, 92) : color.new(color.red, 92))
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+
+alertcondition(newLong,  "BTC #6 Supertrend LONG",  "LONG: 4H Supertrend flipped up")
+alertcondition(newShort, "BTC #6 Supertrend SHORT", "SHORT: 4H Supertrend flipped down")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#6 Supertrend 4H", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "Direction", text_color=color.white)
+    table.cell(info, 1, 1, direction == 1 ? "UP" : "DOWN", text_color = direction == 1 ? color.green : color.red)
+    table.cell(info, 0, 2, "Stop $", text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick), text_color=color.white)

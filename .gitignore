@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+bot/bot_state.json
+bot/bot.log

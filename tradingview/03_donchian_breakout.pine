@@ -1,0 +1,67 @@
+//@version=6
+// ============================================================================
+// BTC Tournament Strategy #3 — Donchian 20 Breakout (Turtle) on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_donchian_breakout):
+//   Long  when 4H close > 20-bar Donchian upper (previous bar)
+//   Short when 4H close < 20-bar Donchian lower (previous bar)
+//   Exit long  when 4H close < 10-bar Donchian lower
+//   Exit short when 4H close > 10-bar Donchian upper
+//   Stop distance : 3 * ATR14 (15m)
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #3 — Donchian 20 Breakout 4H", overlay=true)
+
+entryLen = input.int(20, "Entry channel")
+exitLen  = input.int(10, "Exit channel")
+atrLen   = input.int(14, "ATR length")
+atrMult  = input.float(3.0, "Stop = ATR *")
+
+htf = "240"
+uEntry = request.security(syminfo.tickerid, htf, ta.highest(high, entryLen)[1], lookahead=barmerge.lookahead_off)
+lEntry = request.security(syminfo.tickerid, htf, ta.lowest(low,  entryLen)[1], lookahead=barmerge.lookahead_off)
+uExit  = request.security(syminfo.tickerid, htf, ta.highest(high, exitLen)[1],  lookahead=barmerge.lookahead_off)
+lExit  = request.security(syminfo.tickerid, htf, ta.lowest(low,  exitLen)[1],  lookahead=barmerge.lookahead_off)
+c4     = request.security(syminfo.tickerid, htf, close, lookahead=barmerge.lookahead_off)
+
+// Track state to only fire on transitions
+var int pos = 0
+if pos == 0
+    if c4 > uEntry
+        pos := 1
+    else if c4 < lEntry
+        pos := -1
+else if pos == 1
+    if c4 < lExit
+        pos := 0
+else if pos == -1
+    if c4 > uExit
+        pos := 0
+
+newLong  = pos ==  1 and pos[1] !=  1
+newShort = pos == -1 and pos[1] != -1
+exitAll  = pos ==  0 and pos[1] !=  0
+
+a = ta.atr(atrLen)
+stopDist = atrMult * a
+
+plot(uEntry, "Donchian Upper 20 (4H)", color=color.new(color.green, 0), linewidth=1)
+plot(lEntry, "Donchian Lower 20 (4H)", color=color.new(color.red,   0), linewidth=1)
+plot(uExit,  "Exit Upper 10 (4H)",     color=color.new(color.silver, 0), style=plot.style_cross)
+plot(lExit,  "Exit Lower 10 (4H)",     color=color.new(color.silver, 0), style=plot.style_cross)
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(exitAll,  "EXIT",  shape.xcross,    location.absolute, color.orange, size=size.tiny)
+
+alertcondition(newLong,  "BTC #3 Donchian LONG",  "LONG: 4H close broke above 20-high")
+alertcondition(newShort, "BTC #3 Donchian SHORT", "SHORT: 4H close broke below 20-low")
+alertcondition(exitAll,  "BTC #3 Donchian EXIT",  "EXIT: opposite 10-bar channel hit")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy",  text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#3 Donchian 20", text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "Position", text_color=color.white)
+    table.cell(info, 1, 1, pos == 1 ? "LONG" : pos == -1 ? "SHORT" : "FLAT", text_color = pos == 1 ? color.green : pos == -1 ? color.red : color.gray)
+    table.cell(info, 0, 2, "Stop $",   text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick), text_color=color.white)

@@ -1,0 +1,62 @@
+//@version=6
+// ============================================================================
+// BTC Tournament Strategy #2 — RSI-2 Mean Reversion on 4H
+// ============================================================================
+// Rules (matches backtest/strategies.py : strat_rsi2_meanrev):
+//   Long  when 4H RSI(2) < 10 AND 4H close > EMA200
+//   Short when 4H RSI(2) > 90 AND 4H close < EMA200
+//   Exit long  when 4H RSI(2) > 70
+//   Exit short when 4H RSI(2) < 30
+//   Stop distance : 3 * ATR14 (15m),  TP distance : 3 * ATR14 (15m)
+// NOTE: This strategy was a LOSER in the honest out-of-sample test.
+// ----------------------------------------------------------------------------
+indicator("BTC Tournament #2 — RSI-2 MeanRev 4H", overlay=true)
+
+rsiLen   = input.int(2,   "RSI length")
+trendLen = input.int(200, "EMA trend length")
+oversold = input.int(10,  "Oversold")
+overbought = input.int(90,"Overbought")
+exitLong = input.int(70,  "Exit-long RSI")
+exitShort = input.int(30, "Exit-short RSI")
+atrLen   = input.int(14,  "ATR length")
+atrMult  = input.float(3.0,"Stop/TP = ATR *")
+
+htf = "240"
+r   = request.security(syminfo.tickerid, htf, ta.rsi(close, rsiLen),    lookahead=barmerge.lookahead_off)
+e200= request.security(syminfo.tickerid, htf, ta.ema(close, trendLen),  lookahead=barmerge.lookahead_off)
+c4  = request.security(syminfo.tickerid, htf, close,                    lookahead=barmerge.lookahead_off)
+
+longEntry  = (r < oversold)  and c4 > e200
+shortEntry = (r > overbought) and c4 < e200
+longExit   = r > exitLong
+shortExit  = r < exitShort
+
+// Only fire once per 4H bar (first 15m bar of a new 4H bar)
+newLong  = longEntry  and not longEntry[1]
+newShort = shortEntry and not shortEntry[1]
+newExitL = longExit   and not longExit[1]
+newExitS = shortExit  and not shortExit[1]
+
+a = ta.atr(atrLen)
+stopDist = atrMult * a
+tpDist   = atrMult * a
+
+plot(e200, "EMA 200 (4H)", color=color.blue, linewidth=2)
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.green, text="L", textcolor=color.white, size=size.tiny)
+plotshape(newShort, "SHORT", shape.labeldown, location.abovebar, color.red,   text="S", textcolor=color.white, size=size.tiny)
+plotshape(newExitL, "EXITL", shape.xcross,    location.abovebar, color.orange, size=size.tiny)
+plotshape(newExitS, "EXITS", shape.xcross,    location.belowbar, color.orange, size=size.tiny)
+
+alertcondition(newLong,  "BTC #2 RSI2 LONG",  "LONG: RSI2<10 + uptrend")
+alertcondition(newShort, "BTC #2 RSI2 SHORT", "SHORT: RSI2>90 + downtrend")
+alertcondition(newExitL, "BTC #2 RSI2 ExitL", "Close long: RSI2>70")
+alertcondition(newExitS, "BTC #2 RSI2 ExitS", "Close short: RSI2<30")
+
+var table info = table.new(position.top_right, 2, 3, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Strategy",   text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 1, 0, "#2 RSI-2",   text_color=color.white, bgcolor=color.new(color.black, 30))
+    table.cell(info, 0, 1, "RSI(2) 4H",  text_color=color.white)
+    table.cell(info, 1, 1, str.tostring(r, "#.#"),  text_color=color.white)
+    table.cell(info, 0, 2, "Stop $",     text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(stopDist, format.mintick), text_color=color.white)
