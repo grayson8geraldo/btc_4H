@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ============================================================================
 // BTC Tournament Strategy #5 — MACD Zero-Line + EMA50 filter on 4H  *** WINNER ***
 // ============================================================================
@@ -21,7 +21,14 @@ atrLen   = input.int(14, "ATR length")
 atrMult  = input.float(3.0, "Stop = ATR *")
 
 htf = "240"
-[macdLine, signalLine, hist] = request.security(syminfo.tickerid, htf, [ta.macd(close, fastLen, slowLen, sigLen)[0], ta.macd(close, fastLen, slowLen, sigLen)[1], ta.macd(close, fastLen, slowLen, sigLen)[2]], lookahead=barmerge.lookahead_off)
+
+// Wrapper function so request.security can fetch the full MACD tuple.
+// You cannot index ta.macd()[0] — it must be destructured.
+f_macd() =>
+    [m, s, h] = ta.macd(close, fastLen, slowLen, sigLen)
+    [m, s, h]
+
+[macdLine, signalLine, hist] = request.security(syminfo.tickerid, htf, f_macd(), lookahead=barmerge.lookahead_off)
 e50 = request.security(syminfo.tickerid, htf, ta.ema(close, emaLen), lookahead=barmerge.lookahead_off)
 c4  = request.security(syminfo.tickerid, htf, close,                 lookahead=barmerge.lookahead_off)
 

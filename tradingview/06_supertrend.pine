@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ============================================================================
 // BTC Tournament Strategy #6 — Supertrend(10,3) Follower on 4H
 // ============================================================================
@@ -16,7 +16,14 @@ atrLen  = input.int(14,  "Stop ATR length")
 stopMult= input.float(3.0,"Stop = ATR *")
 
 htf = "240"
-[stLine, dir] = request.security(syminfo.tickerid, htf, [ta.supertrend(stMult, stLen)[0], ta.supertrend(stMult, stLen)[1]], lookahead=barmerge.lookahead_off)
+
+// Wrapper function so request.security can fetch the Supertrend tuple.
+// You cannot index ta.supertrend(...)[0] — it must be destructured.
+f_st() =>
+    [line, dir] = ta.supertrend(stMult, stLen)
+    [line, dir]
+
+[stLine, dir] = request.security(syminfo.tickerid, htf, f_st(), lookahead=barmerge.lookahead_off)
 // Pine's ta.supertrend direction: 1 when downtrend, -1 when uptrend. Normalise.
 direction = dir < 0 ? 1 : -1   // 1 = uptrend, -1 = downtrend
 
