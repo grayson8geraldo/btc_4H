@@ -1,0 +1,187 @@
+//@version=6
+// ============================================================================
+// BTC Tournament #5 — MACD Zero 4H — Position Calculator
+// ============================================================================
+// Full signal indicator + built-in position calculator.
+// Shows entry, stop-loss, position size, leverage and notional
+// directly on the chart — no external tools needed.
+//
+// How to use:
+// 1. Set your equity, risk % and max leverage in the inputs
+// 2. When L/S label appears — read the info panel for exact numbers
+// 3. Execute the trade with those numbers on your exchange
+// ----------------------------------------------------------------------------
+indicator("BTC #5 MACD Zero 4H + Calculator", overlay=true, max_labels_count=500)
+
+// ─── Inputs ────────────────────────────────────────────────────────────────
+grpStrat = "Strategy"
+fastLen  = input.int(12, "MACD fast",           group=grpStrat)
+slowLen  = input.int(26, "MACD slow",           group=grpStrat)
+sigLen   = input.int(9,  "MACD signal",         group=grpStrat)
+emaLen   = input.int(50, "EMA filter length",   group=grpStrat)
+atrLen   = input.int(14, "ATR length (15m)",    group=grpStrat)
+atrMult  = input.float(3.0, "Stop = ATR ×",     group=grpStrat)
+
+grpCalc  = "Position Calculator"
+equity   = input.float(200.0, "Equity ($)",      group=grpCalc, minval=1)
+riskPct  = input.float(1.0,   "Risk per trade (%)", group=grpCalc, minval=0.1, maxval=10, step=0.1)
+maxLev   = input.float(3.0,   "Max leverage",    group=grpCalc, minval=1, step=0.5)
+showCalc = input.bool(true,   "Show calculator panel", group=grpCalc)
+
+grpVisual = "Visual"
+showBg    = input.bool(true, "Background tint",   group=grpVisual)
+showEma   = input.bool(true, "Show EMA50 line",   group=grpVisual)
+
+// ─── 4H data ──────────────────────────────────────────────────────────────
+htf = "240"
+
+f_macd() =>
+    [m, s, h] = ta.macd(close, fastLen, slowLen, sigLen)
+    [m, s, h]
+
+[macdLine, signalLine, hist] = request.security(syminfo.tickerid, htf, f_macd(), lookahead=barmerge.lookahead_off)
+e50 = request.security(syminfo.tickerid, htf, ta.ema(close, emaLen), lookahead=barmerge.lookahead_off)
+c4  = request.security(syminfo.tickerid, htf, close,                 lookahead=barmerge.lookahead_off)
+
+// ─── State machine ────────────────────────────────────────────────────────
+longCond  = macdLine > 0 and c4 > e50
+shortCond = macdLine < 0 and c4 < e50
+
+var int state = 0
+if longCond
+    state := 1
+else if shortCond
+    state := -1
+
+newLong  = state ==  1 and state[1] !=  1
+newShort = state == -1 and state[1] != -1
+flatten  = state ==  0 and state[1] !=  0
+
+// ─── 15m ATR + Position calculator ────────────────────────────────────────
+a         = ta.atr(atrLen)
+stopDist  = atrMult * a
+
+riskUsd   = equity * riskPct / 100.0
+sizeBtc   = riskUsd / stopDist
+notional  = sizeBtc * close
+levActual = notional / equity
+
+// Cap at max leverage
+if notional > equity * maxLev
+    sizeBtc   := (equity * maxLev) / close
+    notional  := sizeBtc * close
+    levActual := maxLev
+
+entryPx    = close
+longStop   = entryPx - stopDist
+shortStop  = entryPx + stopDist
+longTP     = entryPx + stopDist   // for reference only (not used by strategy)
+
+// ─── Plots ────────────────────────────────────────────────────────────────
+plot(showEma ? e50 : na, "EMA 50 (4H)", color=color.blue, linewidth=2)
+
+plotshape(newLong,  "LONG",  shape.labelup,   location.belowbar, color.new(color.green, 0), text="L", textcolor=color.white, size=size.small)
+plotshape(newShort, "SHORT", shape.labeldown,  location.abovebar, color.new(color.red,   0), text="S", textcolor=color.white, size=size.small)
+plotshape(flatten,  "FLAT",  shape.xcross,     location.absolute, color.gray, size=size.tiny)
+
+bgcolor(showBg and state ==  1 ? color.new(color.green, 92) : na)
+bgcolor(showBg and state == -1 ? color.new(color.red,   92) : na)
+
+// ─── Stop-loss lines (only on last signal bar and forward) ────────────────
+var float activeStop = na
+var int   activeDir  = 0
+if newLong
+    activeStop := longStop
+    activeDir  := 1
+if newShort
+    activeStop := shortStop
+    activeDir  := -1
+if flatten
+    activeStop := na
+    activeDir  := 0
+
+stopColor = activeDir == 1 ? color.new(color.red, 30) : activeDir == -1 ? color.new(color.red, 30) : na
+plot(activeStop, "Active Stop", color=stopColor, style=plot.style_stepline, linewidth=2)
+
+// ─── Dynamic alerts ──────────────────────────────────────────────────────
+if newLong
+    msg = "LONG BTCUSDT\n" +
+          "Entry : " + str.tostring(close, format.mintick) + "\n" +
+          "Stop  : " + str.tostring(longStop, format.mintick) +
+          " (-" + str.tostring(stopDist, format.mintick) + ")\n" +
+          "Size  : " + str.tostring(sizeBtc, "#.#####") + " BTC" +
+          " (" + str.tostring(notional, "#.##") + "$ " + str.tostring(levActual, "#.##") + "x)\n" +
+          "TP    : none, exit on SHORT/FLAT"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if newShort
+    msg = "SHORT BTCUSDT\n" +
+          "Entry : " + str.tostring(close, format.mintick) + "\n" +
+          "Stop  : " + str.tostring(shortStop, format.mintick) +
+          " (+" + str.tostring(stopDist, format.mintick) + ")\n" +
+          "Size  : " + str.tostring(sizeBtc, "#.#####") + " BTC" +
+          " (" + str.tostring(notional, "#.##") + "$ " + str.tostring(levActual, "#.##") + "x)\n" +
+          "TP    : none, exit on LONG/FLAT"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if flatten
+    alert("FLAT BTCUSDT — close position and wait", alert.freq_once_per_bar_close)
+
+// ─── Info panel (always visible) ─────────────────────────────────────────
+if showCalc
+    var table panel = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 15), border_width=1, border_color=color.new(color.gray, 60))
+
+    headerBg = state == 1 ? color.new(color.green, 30) : state == -1 ? color.new(color.red, 30) : color.new(color.gray, 30)
+    dirText  = state == 1 ? "LONG" : state == -1 ? "SHORT" : "FLAT"
+    dirColor = state == 1 ? color.green : state == -1 ? color.red : color.gray
+
+    if barstate.islast
+        // Header
+        table.cell(panel, 0, 0, "MACD Zero 4H",   text_color=color.white, bgcolor=headerBg, text_size=size.normal)
+        table.cell(panel, 1, 0, dirText,           text_color=color.white, bgcolor=headerBg, text_size=size.normal)
+
+        // 4H context
+        table.cell(panel, 0, 1, "MACD (4H)",      text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 1, str.tostring(macdLine, "#.##"), text_color = macdLine > 0 ? color.green : color.red, text_size=size.small)
+        table.cell(panel, 0, 2, "vs EMA50",       text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 2, c4 > e50 ? "above" : "below", text_color = c4 > e50 ? color.green : color.red, text_size=size.small)
+
+        // Separator
+        table.cell(panel, 0, 3, "─ Calculator ─",  text_color=color.yellow, text_size=size.small)
+        table.cell(panel, 1, 3, "",                 text_color=color.yellow, text_size=size.small)
+
+        // Entry
+        table.cell(panel, 0, 4, "Entry",           text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 4, "$" + str.tostring(entryPx, format.mintick), text_color=color.white, text_size=size.small)
+
+        // Stop-loss
+        slPx = state == 1 ? longStop : state == -1 ? shortStop : na
+        slText = na(slPx) ? "—" : "$" + str.tostring(slPx, format.mintick)
+        table.cell(panel, 0, 5, "Stop-loss",       text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 5, slText,             text_color=color.new(color.red, 0), text_size=size.small)
+
+        // Stop distance
+        table.cell(panel, 0, 6, "Stop dist",       text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 6, "$" + str.tostring(stopDist, "#.##"), text_color=color.white, text_size=size.small)
+
+        // Position size
+        table.cell(panel, 0, 7, "Size (BTC)",      text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 7, str.tostring(sizeBtc, "#.#####"), text_color=color.white, text_size=size.small)
+
+        // Notional
+        table.cell(panel, 0, 8, "Notional",        text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 8, "$" + str.tostring(notional, "#.##"), text_color=color.white, text_size=size.small)
+
+        // Leverage
+        levText = str.tostring(levActual, "#.##") + "x"
+        levWarn = levActual >= maxLev
+        table.cell(panel, 0, 9, "Leverage",        text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 9, levText,            text_color = levWarn ? color.yellow : color.white, text_size=size.small)
+
+        // Risk
+        table.cell(panel, 0, 10, "Risk",            text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 10, "$" + str.tostring(riskUsd, "#.##") + " (" + str.tostring(riskPct, "#.#") + "%)", text_color=color.orange, text_size=size.small)
+
+        // Equity
+        table.cell(panel, 0, 11, "Equity",          text_color=color.silver, text_size=size.small)
+        table.cell(panel, 1, 11, "$" + str.tostring(equity, "#.##"), text_color=color.white, text_size=size.small)
